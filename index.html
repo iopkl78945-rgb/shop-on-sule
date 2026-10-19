@@ -1,0 +1,915 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  setDoc, 
+  addDoc, 
+  onSnapshot, 
+  deleteDoc, 
+  updateDoc 
+} from 'firebase/firestore';
+import { 
+  ShoppingCart, 
+  Package, 
+  Users, 
+  Clock, 
+  Plus, 
+  CheckCircle, 
+  AlertCircle, 
+  ShieldCheck, 
+  LogOut, 
+  Sparkles, 
+  TrendingUp, 
+  FileSpreadsheet, 
+  Trash2, 
+  ChevronRight, 
+  Filter, 
+  Tag, 
+  Phone, 
+  MapPin, 
+  User,
+  ArrowRight
+} from 'lucide-react';
+
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : {
+      apiKey: "demo-key",
+      authDomain: "demo.firebaseapp.com",
+      projectId: "demo-project",
+      storageBucket: "demo.appspot.com",
+      messagingSenderId: "123456789",
+      appId: "1:123456789:web:demo"
+    };
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'group-buy-app';
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('browse'); // 'browse', 'my-orders', 'admin'
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+
+  // Firestore Realtime Collections State
+  const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
+
+  // Selected Product Modal & Form States
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [orderQuantity, setOrderQuantity] = useState(1);
+  const [orderSpec, setOrderSpec] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [customerAddress, setCustomerAddress] = useState('');
+  const [orderNote, setOrderNote] = useState('');
+  const [orderSuccessMsg, setOrderSuccessMsg] = useState('');
+
+  // Admin New Product Form State
+  const [newProduct, setNewProduct] = useState({
+    title: '',
+    category: '美食生鮮',
+    price: 100,
+    originalPrice: 150,
+    targetCount: 20,
+    image: '',
+    description: '',
+    specs: '原味, 辣味',
+    endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
+  });
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth error:", err);
+      }
+    };
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, (usr) => {
+      setUser(usr);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+
+    // Subscribe to Public Group Buy Products
+    const productsRef = collection(db, 'artifacts', appId, 'public', 'data', 'products');
+    const unsubscribeProducts = onSnapshot(productsRef, (snapshot) => {
+      const items = [];
+      snapshot.forEach((doc) => {
+        items.push({ id: doc.id, ...doc.data() });
+      });
+      setProducts(items);
+    }, (err) => console.error("Products snapshot error:", err));
+
+    // Subscribe to Public Orders
+    const ordersRef = collection(db, 'artifacts', appId, 'public', 'data', 'orders');
+    const unsubscribeOrders = onSnapshot(ordersRef, (snapshot) => {
+      const items = [];
+      snapshot.forEach((doc) => {
+        items.push({ id: doc.id, ...doc.data() });
+      });
+      setOrders(items);
+    }, (err) => console.error("Orders snapshot error:", err));
+
+    return () => {
+      unsubscribeProducts();
+      unsubscribeOrders();
+    };
+  }, [user]);
+
+  useEffect(() => {
+    if (user && products.length === 0) {
+      // Seed initial group buys if empty
+      const initSeed = async () => {
+        const defaultProducts = [
+          {
+            title: "【爆款團購】日本北海道乳酪生乳捲 (買一送一超值組)",
+            category: "美食生鮮",
+            price: 399,
+            originalPrice: 680,
+            targetCount: 30,
+            image: "https://images.unsplash.com/photo-1535141192574-5d4897c13136?auto=format&fit=crop&q=80&w=800",
+            description: "嚴選北海道100%鮮乳製作，濃郁滑順不甜膩！限量30組即可成團享最低批發價！",
+            specs: "原味生乳捲, 濃黑巧克力",
+            endDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()
+          },
+          {
+            title: "【團友熱銷】筋膜按摩槍 旗艦版 (送4款按摩頭)",
+            category: "生活家電",
+            price: 890,
+            originalPrice: 1980,
+            targetCount: 15,
+            image: "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b?auto=format&fit=crop&q=80&w=800",
+            description: "靜音高頻震動，深度放鬆肌肉酸痛。附贈四種專業按摩頭，居家保健必備！",
+            specs: "深邃黑, 玫瑰金",
+            endDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+          }
+        ];
+
+        for (const prod of defaultProducts) {
+          await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), prod);
+        }
+      };
+      initSeed();
+    }
+  }, [user, products.length]);
+
+  // Calculate total sold count per product ID
+  const productStats = useMemo(() => {
+    const stats = {};
+    orders.forEach(order => {
+      if (!stats[order.productId]) {
+        stats[order.productId] = { count: 0, ordersCount: 0 };
+      }
+      stats[order.productId].count += Number(order.quantity || 1);
+      stats[order.productId].ordersCount += 1;
+    });
+    return stats;
+  }, [orders]);
+
+  // My current user orders
+  const myOrders = useMemo(() => {
+    if (!user) return [];
+    return orders.filter(o => o.userId === user.uid);
+  }, [orders, user]);
+
+  const handleOpenOrderModal = (product) => {
+    setSelectedProduct(product);
+    setOrderQuantity(1);
+    const specsList = product.specs ? product.specs.split(',').map(s => s.trim()) : [];
+    setOrderSpec(specsList[0] || '');
+    setOrderSuccessMsg('');
+  };
+
+  const handleCreateOrder = async (e) => {
+    e.preventDefault();
+    if (!user || !selectedProduct) return;
+
+    try {
+      const newOrderData = {
+        userId: user.uid,
+        productId: selectedProduct.id,
+        productTitle: selectedProduct.title,
+        price: selectedProduct.price,
+        spec: orderSpec,
+        quantity: Number(orderQuantity),
+        totalPrice: Number(selectedProduct.price) * Number(orderQuantity),
+        customerName,
+        customerPhone,
+        customerAddress,
+        note: orderNote,
+        status: '已下單',
+        createdAt: new Date().toISOString()
+      };
+
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'orders'), newOrderData);
+
+      setOrderSuccessMsg('🎉 恭喜！參團下單成功！已為您記錄訂單。');
+      setTimeout(() => {
+        setSelectedProduct(null);
+        setOrderSuccessMsg('');
+        setActiveTab('my-orders');
+      }, 1500);
+    } catch (err) {
+      console.error("Order submit failed:", err);
+      alert("下單失敗，請再試一次");
+    }
+  };
+
+  const handleAdminLogin = (e) => {
+    e.preventDefault();
+    if (adminPasswordInput === 'admin888') {
+      setIsAdminLoggedIn(true);
+      setAdminPasswordInput('');
+    } else {
+      alert('團購主密碼錯誤！(預設範例密碼為: admin888)');
+    }
+  };
+
+  const handleCreateProduct = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'products'), {
+        ...newProduct,
+        price: Number(newProduct.price),
+        originalPrice: Number(newProduct.originalPrice),
+        targetCount: Number(newProduct.targetCount),
+        createdAt: new Date().toISOString()
+      });
+      alert('✨ 成功發起新團購！');
+      setNewProduct({
+        title: '',
+        category: '美食生鮮',
+        price: 100,
+        originalPrice: 150,
+        targetCount: 20,
+        image: '',
+        description: '',
+        specs: '預設規格',
+        endDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 16)
+      });
+    } catch (err) {
+      console.error("Add product error:", err);
+    }
+  };
+
+  const handleDeleteProduct = async (id) => {
+    if (confirm('確定要下架此團購商品嗎？')) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'products', id));
+    }
+  };
+
+  const handleDeleteOrder = async (id) => {
+    if (confirm('確定要取消此筆訂單嗎？')) {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'orders', id));
+    }
+  };
+
+  const exportOrdersCSV = () => {
+    if (orders.length === 0) {
+      alert('目前尚無訂單可導出');
+      return;
+    }
+    let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
+    csvContent += "訂單編號,商品名稱,規格,數量,總金額,訂購人,電話,地址,下單時間\n";
+
+    orders.forEach(o => {
+      const row = [
+        o.id,
+        `"${o.productTitle}"`,
+        `"${o.spec}"`,
+        o.quantity,
+        o.totalPrice,
+        `"${o.customerName}"`,
+        `"${o.customerPhone}"`,
+        `"${o.customerAddress}"`,
+        new Date(o.createdAt).toLocaleString()
+      ].join(",");
+      csvContent += row + "\n";
+    });
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `團購訂單明細_${new Date().toISOString().slice(0,10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans pb-12">
+      {/* Top Navigation Bar */}
+      <header className="bg-emerald-600 text-white sticky top-0 z-40 shadow-md">
+        <div className="max-w-6xl mx-auto px-4 py-3 flex justify-between items-center">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('browse')}>
+            <div className="bg-white text-emerald-600 p-2 rounded-xl shadow">
+              <ShoppingCart className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="font-bold text-xl leading-tight">愛團購 GroupBuy</h1>
+              <p className="text-xs text-emerald-100">多人連線・一起買更划算</p>
+            </div>
+          </div>
+
+          <nav className="flex items-center gap-2 sm:gap-4">
+            <button 
+              onClick={() => setActiveTab('browse')}
+              className={`px-3 py-1.5 rounded-lg font-medium text-sm transition ${activeTab === 'browse' ? 'bg-emerald-700 text-white shadow-inner' : 'hover:bg-emerald-500'}`}
+            >
+              所有團購
+            </button>
+            <button 
+              onClick={() => setActiveTab('my-orders')}
+              className={`px-3 py-1.5 rounded-lg font-medium text-sm transition relative ${activeTab === 'my-orders' ? 'bg-emerald-700 text-white shadow-inner' : 'hover:bg-emerald-500'}`}
+            >
+              我的訂單
+              {myOrders.length > 0 && (
+                <span className="ml-1.5 bg-amber-400 text-slate-900 text-xs px-2 py-0.5 rounded-full font-bold">
+                  {myOrders.length}
+                </span>
+              )}
+            </button>
+            <button 
+              onClick={() => setActiveTab('admin')}
+              className={`px-3 py-1.5 rounded-lg font-medium text-sm transition flex items-center gap-1 ${activeTab === 'admin' ? 'bg-amber-500 text-slate-900 font-bold' : 'bg-emerald-700/60 hover:bg-emerald-700'}`}
+            >
+              <ShieldCheck className="w-4 h-4" />
+              團購主後台
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      {/* Main Content Area */}
+      <main className="max-w-6xl mx-auto px-4 mt-6">
+        
+        {/* Banner */}
+        <div className="mb-8 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 text-white p-6 sm:p-8 shadow-lg relative overflow-hidden">
+          <div className="relative z-10 max-w-xl">
+            <div className="inline-flex items-center gap-1.5 bg-emerald-500/30 backdrop-blur-md px-3 py-1 rounded-full text-xs font-semibold mb-3 border border-emerald-300/30">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" /> 線上即時合購平台
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-extrabold mb-2 leading-snug">
+              作夥拚團購，最低享有批發批發價！
+            </h2>
+            <p className="text-emerald-100 text-sm sm:text-base mb-4">
+              即時統計參團人數，雲端資料自動同步，成團快速，買得多省得多！
+            </p>
+          </div>
+          <div className="absolute -right-8 -bottom-8 opacity-20 pointer-events-none">
+            <TrendingUp className="w-72 h-72" />
+          </div>
+        </div>
+
+        {/* TAB 1: BROWSE GROUP BUYS */}
+        {activeTab === 'browse' && (
+          <div>
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold flex items-center gap-2">
+                <Package className="text-emerald-600" /> 熱門開團中商品
+              </h3>
+              <div className="text-sm text-slate-500">
+                目前共有 <span className="font-bold text-emerald-600">{products.length}</span> 個熱門團購
+              </div>
+            </div>
+
+            {products.length === 0 ? (
+              <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-slate-100">
+                <Package className="w-16 h-16 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">目前暫無開團中的商品</p>
+                <p className="text-xs text-slate-400 mt-1">可前往「團購主後台」開立第一個團購！</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {products.map((prod) => {
+                  const currentCount = productStats[prod.id]?.count || 0;
+                  const progress = Math.min(100, Math.round((currentCount / (prod.targetCount || 10)) * 100));
+                  const isReached = currentCount >= (prod.targetCount || 10);
+
+                  return (
+                    <div key={prod.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md transition duration-200 flex flex-col justify-between">
+                      <div>
+                        {/* Image Header */}
+                        <div className="relative h-48 bg-slate-100 overflow-hidden">
+                          <img 
+                            src={prod.image || "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?auto=format&fit=crop&q=80&w=800"} 
+                            alt={prod.title}
+                            className="w-full h-full object-cover"
+                          />
+                          <span className="absolute top-3 left-3 bg-slate-900/70 backdrop-blur-md text-white text-xs px-2.5 py-1 rounded-md">
+                            {prod.category || '精選商品'}
+                          </span>
+                          {isReached && (
+                            <span className="absolute top-3 right-3 bg-amber-500 text-white text-xs font-bold px-2.5 py-1 rounded-md shadow-md flex items-center gap-1">
+                              <CheckCircle className="w-3.5 h-3.5" /> 已達標成團
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-5">
+                          <h4 className="font-bold text-slate-800 text-base mb-2 line-clamp-2 leading-snug">
+                            {prod.title}
+                          </h4>
+                          <p className="text-slate-500 text-xs line-clamp-2 mb-4">
+                            {prod.description}
+                          </p>
+
+                          {/* Progress bar */}
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 mb-4">
+                            <div className="flex justify-between items-center text-xs mb-1.5">
+                              <span className="text-slate-600 flex items-center gap-1">
+                                <Users className="w-3.5 h-3.5 text-emerald-600" />
+                                已參團：<strong className="text-emerald-600 text-sm">{currentCount}</strong> 件
+                              </span>
+                              <span className="text-slate-400">
+                                目標：{prod.targetCount} 件
+                              </span>
+                            </div>
+                            <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                              <div 
+                                className={`h-2.5 rounded-full transition-all duration-500 ${isReached ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                style={{ width: `${progress}%` }}
+                              ></div>
+                            </div>
+                            <div className="text-right text-[10px] text-slate-400 mt-1">
+                              進度 {progress}%
+                            </div>
+                          </div>
+
+                          {/* Price Tag */}
+                          <div className="flex items-baseline gap-2 mb-2">
+                            <span className="text-2xl font-black text-rose-600">
+                              NT$ {prod.price}
+                            </span>
+                            {prod.originalPrice && (
+                              <span className="text-xs text-slate-400 line-through">
+                                NT$ {prod.originalPrice}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Footer CTA */}
+                      <div className="px-5 pb-5">
+                        <button 
+                          onClick={() => handleOpenOrderModal(prod)}
+                          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-2"
+                        >
+                          <ShoppingCart className="w-4 h-4" /> 我要參團下單
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: MY ORDERS */}
+        {activeTab === 'my-orders' && (
+          <div className="max-w-4xl mx-auto">
+            <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <CheckCircle className="text-emerald-600" /> 我的團購訂單紀錄
+            </h3>
+
+            {myOrders.length === 0 ? (
+              <div className="text-center py-16 bg-white rounded-2xl shadow-sm border border-slate-100">
+                <ShoppingCart className="w-16 h-16 text-slate-300 mx-auto mb-3" />
+                <p className="text-slate-500 font-medium">您目前尚未參加任何團購</p>
+                <button 
+                  onClick={() => setActiveTab('browse')}
+                  className="mt-4 px-4 py-2 bg-emerald-600 text-white font-semibold text-sm rounded-xl hover:bg-emerald-700 transition"
+                >
+                  去逛逛熱門團購
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {myOrders.map((order) => (
+                  <div key={order.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full">
+                          {order.status || '已成團'}
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          {new Date(order.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <h4 className="font-bold text-slate-800 text-base">
+                        {order.productTitle}
+                      </h4>
+                      <div className="text-sm text-slate-600 flex flex-wrap gap-x-4 gap-y-1">
+                        <span>規格：<strong className="text-slate-800">{order.spec || '預設'}</strong></span>
+                        <span>數量：<strong className="text-slate-800">{order.quantity}</strong></span>
+                        <span>收件人：{order.customerName} ({order.customerPhone})</span>
+                      </div>
+                    </div>
+
+                    <div className="flex sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto border-t sm:border-t-0 pt-3 sm:pt-0 border-slate-100">
+                      <div className="text-right">
+                        <div className="text-xs text-slate-400">總計金額</div>
+                        <div className="text-xl font-black text-rose-600">NT$ {order.totalPrice}</div>
+                      </div>
+                      <button 
+                        onClick={() => handleDeleteOrder(order.id)}
+                        className="mt-2 text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1 transition"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> 取消訂單
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: ADMIN PANEL */}
+        {activeTab === 'admin' && (
+          <div className="max-w-5xl mx-auto">
+            {!isAdminLoggedIn ? (
+              /* Admin Password Login Modal */
+              <div className="max-w-md mx-auto bg-white p-8 rounded-2xl shadow-md border border-slate-100 mt-8 text-center">
+                <div className="bg-amber-100 text-amber-700 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <h3 className="text-xl font-bold mb-2">團購主/管理員登入</h3>
+                <p className="text-xs text-slate-500 mb-6">請輸入管理密碼以開啟發起開團與訂單管理權限</p>
+                <form onSubmit={handleAdminLogin} className="space-y-4">
+                  <input 
+                    type="password" 
+                    placeholder="輸入團購主密碼 (預設: admin888)" 
+                    value={adminPasswordInput}
+                    onChange={(e) => setAdminPasswordInput(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                    required
+                  />
+                  <button 
+                    type="submit"
+                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-2.5 rounded-xl text-sm transition"
+                  >
+                    驗證登入
+                  </button>
+                </form>
+              </div>
+            ) : (
+              /* Admin Control Center */
+              <div className="space-y-8">
+                {/* Header & Actions */}
+                <div className="bg-slate-900 text-white p-6 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                      <ShieldCheck className="text-amber-400" /> 團購主雲端管理控制台
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-1">您可在此發起新團購、即時查看所有團員下單與導出 Excel 報表</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={exportOrdersCSV}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl font-semibold text-sm flex items-center gap-2 transition"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" /> 導出訂單 CSV
+                    </button>
+                    <button 
+                      onClick={() => setIsAdminLoggedIn(false)}
+                      className="bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-2 rounded-xl text-sm flex items-center gap-1 transition"
+                    >
+                      <LogOut className="w-4 h-4" /> 退出
+                    </button>
+                  </div>
+                </div>
+
+                {/* Form: Add New Group Buy */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                  <h4 className="font-bold text-lg mb-4 flex items-center gap-2">
+                    <Plus className="text-emerald-600" /> 發起新團購商品
+                  </h4>
+                  <form onSubmit={handleCreateProduct} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">團購商品名稱 *</label>
+                      <input 
+                        type="text" 
+                        required 
+                        placeholder="例：【免運團購】台東頂級釋迦禮盒 (5台斤)"
+                        value={newProduct.title}
+                        onChange={(e) => setNewProduct({...newProduct, title: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">商品分類</label>
+                      <select 
+                        value={newProduct.category}
+                        onChange={(e) => setNewProduct({...newProduct, category: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      >
+                        <option value="美食生鮮">美食生鮮</option>
+                        <option value="生活家電">生活家電</option>
+                        <option value="居家用品">居家用品</option>
+                        <option value="服飾美妝">服飾美妝</option>
+                        <option value="母嬰親子">母嬰親子</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">成團目標數量 (件/組) *</label>
+                      <input 
+                        type="number" 
+                        required 
+                        min="1"
+                        value={newProduct.targetCount}
+                        onChange={(e) => setNewProduct({...newProduct, targetCount: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">團購優惠價 (NT$) *</label>
+                      <input 
+                        type="number" 
+                        required 
+                        value={newProduct.price}
+                        onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">原價/原售價 (NT$)</label>
+                      <input 
+                        type="number" 
+                        value={newProduct.originalPrice}
+                        onChange={(e) => setNewProduct({...newProduct, originalPrice: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">商品規格 (以逗號分隔)</label>
+                      <input 
+                        type="text" 
+                        placeholder="例：紅肉, 白肉 或 S, M, L"
+                        value={newProduct.specs}
+                        onChange={(e) => setNewProduct({...newProduct, specs: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">商品圖片 URL 網址</label>
+                      <input 
+                        type="url" 
+                        placeholder="https://images.unsplash.com/..."
+                        value={newProduct.image}
+                        onChange={(e) => setNewProduct({...newProduct, image: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">團購詳情說明</label>
+                      <textarea 
+                        rows="3"
+                        placeholder="描述商品特點、發貨時間、付款方式等資訊..."
+                        value={newProduct.description}
+                        onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      ></textarea>
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <button 
+                        type="submit"
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl transition shadow-md flex items-center justify-center gap-2"
+                      >
+                        <Plus className="w-5 h-5" /> 立即上架公開團購
+                      </button>
+                    </div>
+                  </form>
+                </div>
+
+                {/* All Orders Realtime Table */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                  <h4 className="font-bold text-lg mb-4 flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <FileSpreadsheet className="text-emerald-600" /> 所有團員訂單總覽 (雲端即時)
+                    </span>
+                    <span className="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-full">
+                      共 {orders.length} 筆訂單
+                    </span>
+                  </h4>
+
+                  {orders.length === 0 ? (
+                    <p className="text-center py-8 text-slate-400 text-sm">目前尚無任何參團訂單記錄</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs text-slate-600">
+                        <thead className="bg-slate-50 text-slate-700 font-bold uppercase border-b border-slate-100">
+                          <tr>
+                            <th className="p-3">商品名稱</th>
+                            <th className="p-3">規格</th>
+                            <th className="p-3">數量</th>
+                            <th className="p-3">金額</th>
+                            <th className="p-3">買家姓名</th>
+                            <th className="p-3">電話</th>
+                            <th className="p-3">地址 / 備註</th>
+                            <th className="p-3">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {orders.map((o) => (
+                            <tr key={o.id} className="hover:bg-slate-50/80">
+                              <td className="p-3 font-semibold text-slate-800 max-w-[200px] truncate">{o.productTitle}</td>
+                              <td className="p-3">{o.spec || '-'}</td>
+                              <td className="p-3 font-bold text-slate-800">{o.quantity}</td>
+                              <td className="p-3 font-bold text-rose-600">NT$ {o.totalPrice}</td>
+                              <td className="p-3">{o.customerName}</td>
+                              <td className="p-3">{o.customerPhone}</td>
+                              <td className="p-3 max-w-[150px] truncate">{o.customerAddress} {o.note && `(${o.note})`}</td>
+                              <td className="p-3">
+                                <button 
+                                  onClick={() => handleDeleteOrder(o.id)}
+                                  className="text-rose-500 hover:text-rose-700 p-1"
+                                  title="刪除此筆訂單"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+      </main>
+
+      {}
+      {selectedProduct && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl relative my-8">
+            <button 
+              onClick={() => setSelectedProduct(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 text-lg font-bold"
+            >
+              ✕
+            </button>
+
+            {orderSuccessMsg ? (
+              <div className="text-center py-8">
+                <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <CheckCircle className="w-10 h-10" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-800 mb-2">{orderSuccessMsg}</h3>
+                <p className="text-xs text-slate-500">正在自動轉跳至您的訂單頁面...</p>
+              </div>
+            ) : (
+              <div>
+                <h3 className="text-lg font-bold text-slate-800 mb-1">參團下單</h3>
+                <p className="text-xs text-slate-500 mb-4">{selectedProduct.title}</p>
+
+                <form onSubmit={handleCreateOrder} className="space-y-4">
+                  {/* Spec selection */}
+                  {selectedProduct.specs && (
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">選擇規格</label>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedProduct.specs.split(',').map((spec) => {
+                          const trimmed = spec.trim();
+                          return (
+                            <button
+                              key={trimmed}
+                              type="button"
+                              onClick={() => setOrderSpec(trimmed)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${orderSpec === trimmed ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-700 border-slate-200'}`}
+                            >
+                              {trimmed}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quantity */}
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-600 mb-1">數量</label>
+                    <div className="flex items-center gap-3">
+                      <button 
+                        type="button" 
+                        onClick={() => setOrderQuantity(Math.max(1, orderQuantity - 1))}
+                        className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 font-bold hover:bg-slate-200"
+                      >
+                        -
+                      </button>
+                      <span className="font-bold text-slate-800 text-base">{orderQuantity}</span>
+                      <button 
+                        type="button" 
+                        onClick={() => setOrderQuantity(orderQuantity + 1)}
+                        className="w-8 h-8 rounded-lg bg-slate-100 text-slate-700 font-bold hover:bg-slate-200"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Customer Info */}
+                  <div className="border-t border-slate-100 pt-3 space-y-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">姓名 *</label>
+                      <input 
+                        type="text" 
+                        required 
+                        placeholder="請輸入訂購人姓名" 
+                        value={customerName}
+                        onChange={(e) => setCustomerName(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">聯絡電話 *</label>
+                      <input 
+                        type="tel" 
+                        required 
+                        placeholder="0912-345-678" 
+                        value={customerPhone}
+                        onChange={(e) => setCustomerPhone(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">收件地址 / 取貨地點 *</label>
+                      <input 
+                        type="text" 
+                        required 
+                        placeholder="請輸入收件地址或指定面交據點" 
+                        value={customerAddress}
+                        onChange={(e) => setCustomerAddress(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-600 mb-1">備註 (可選)</label>
+                      <input 
+                        type="text" 
+                        placeholder="例如：方便收貨時間..." 
+                        value={orderNote}
+                        onChange={(e) => setOrderNote(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Total summary */}
+                  <div className="bg-slate-50 p-3 rounded-xl flex justify-between items-center text-sm font-bold text-slate-800">
+                    <span>應付總金額：</span>
+                    <span className="text-xl text-rose-600">NT$ {Number(selectedProduct.price) * orderQuantity}</span>
+                  </div>
+
+                  <button 
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-md transition"
+                  >
+                    確認參團下單
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
